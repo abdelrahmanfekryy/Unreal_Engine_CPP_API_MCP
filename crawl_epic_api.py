@@ -14,11 +14,11 @@ from urllib.parse import urljoin, urlparse
 
 from scrapling import StealthyFetcher
 
-BASE_URL = "https://dev.epicgames.com/documentation/unreal-engine/API?application_version=5.6"
+BASE_URL = "https://dev.epicgames.com/documentation/unreal-engine/API/Runtime/Engine?application_version=5.6"
 OUTPUT_DIR = Path("epic_api_docs_5.6")
 CRAWL_DELAY = 0.0
 MAX_DEPTH = None
-CRAWL_API_PREFIX = "/documentation/unreal-engine/API"
+CRAWL_API_PREFIX = "/documentation/unreal-engine/API/Runtime/Engine"
 CRAWL_LOG = Path("crawl_log.jsonl")
 
 
