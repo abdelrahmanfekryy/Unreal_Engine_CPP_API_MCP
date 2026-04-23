@@ -2,4 +2,5 @@ epic_api_docs_5.6/
 experiments/
 .venv/
 crawl_state.pkl
+crawl_log.jsonl
 __pycache__/

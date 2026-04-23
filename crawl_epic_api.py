@@ -19,13 +19,15 @@ BASE_URL = "https://dev.epicgames.com/documentation/unreal-engine/API?applicatio
 OUTPUT_DIR = Path("epic_api_docs_5.6")
 CRAWL_DELAY = 0.0
 MAX_DEPTH = None
-CRAWL_BASE_PREFIX = "/documentation/unreal-engine/API"
+CRAWL_API_PREFIX = "/documentation/unreal-engine/API"
 SAVE_STATE_FILE = Path("crawl_state.pkl")
+CRAWL_LOG = Path("crawl_log.jsonl")
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 visited_urls = set()
 all_queued_urls = set()
 pages_crawled = [0]
+jsonl_file = None
 
 
 def url_to_path(url):
@@ -45,13 +47,15 @@ def url_to_path(url):
     return OUTPUT_DIR / (safe_path + ".html")
 
 
-def save_page(response, url):
+def save_page(response, url, sub_urls=None):
+    global jsonl_file
+    if jsonl_file is None:
+        jsonl_file = open(CRAWL_LOG, "a", encoding="utf-8")
     file_path = url_to_path(url)
     file_path.parent.mkdir(parents=True, exist_ok=True)
     html = response.body
     with open(file_path, "wb") as f:
         f.write(html)
-    meta_path = file_path.with_suffix(".json")
     title_el = response.find("title")
     title = str(title_el.text) if title_el else ""
     metadata = {
@@ -60,21 +64,23 @@ def save_page(response, url):
         "title": title,
         "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "file": str(file_path.relative_to(OUTPUT_DIR)),
+        "sub-urls": sub_urls if sub_urls else [],
     }
-    with open(meta_path, "w", encoding="utf-8") as f:
-        json.dump(metadata, f, indent=2, ensure_ascii=False)
+    jsonl_file.write(json.dumps(metadata, ensure_ascii=False) + "\n")
+    jsonl_file.flush()
     return file_path
 
 
-def extract_api_links(response):
+def extract_api_links(response, url):
     links = response.css("a[href]")
     valid_links = []
+    base = BASE_URL.rsplit("?", 1)[0]
     for link in links:
         href = str(link.attrib.get("href", ""))
-        if href.startswith(CRAWL_BASE_PREFIX + "/"):
-            clean_href = href.split("?")[0]
-            full_url = urljoin(BASE_URL.rsplit("?", 1)[0] + "/", clean_href) + "?application_version=5.6"
-            if full_url not in valid_links:
+        clean_href = href.split("?")[0]
+        full_url = urljoin(base + "/", clean_href) + "?application_version=5.6"
+        if full_url != url and full_url not in valid_links:
+            if clean_href.startswith(CRAWL_API_PREFIX + "/"):
                 valid_links.append(full_url)
     return valid_links
 
@@ -136,14 +142,14 @@ def crawl_bfs(resume=False):
                 print(f"  [WARN] Status {response.status}, skipping.")
                 continue
 
-            file_path = save_page(response, url)
+            child_links = extract_api_links(response, url) if (MAX_DEPTH is None or depth < MAX_DEPTH) else []
+            file_path = save_page(response, url, sub_urls=child_links)
             title_el = response.find("title")
             title = str(title_el.text) if title_el else "N/A"
             print(f"  [OK] Saved: {file_path.relative_to(OUTPUT_DIR)} | {title}")
             pages_crawled[0] += 1
 
             if MAX_DEPTH is None or depth < MAX_DEPTH:
-                child_links = extract_api_links(response)
                 for child_url in child_links:
                     if child_url not in visited_urls and child_url not in all_queued_urls:
                         queue.append((child_url, depth + 1))
@@ -173,8 +179,8 @@ def crawl_bfs(resume=False):
 
     total_files = sum(1 for _ in OUTPUT_DIR.rglob("*"))
     html_files = sum(1 for _ in OUTPUT_DIR.rglob("*.html"))
-    json_files = sum(1 for _ in OUTPUT_DIR.rglob("*.json"))
-    print(f"Files created: {total_files} (HTML: {html_files}, JSON: {json_files})")
+    print(f"Files created: {total_files} (HTML: {html_files})")
+    print(f"Crawl log: {CRAWL_LOG.absolute()} ({pages_crawled[0]} entries)")
 
     # Directory tree
     def print_tree(directory, prefix=""):
@@ -193,6 +199,10 @@ def crawl_bfs(resume=False):
     # Clean up state file if fully complete
     if SAVE_STATE_FILE.exists():
         SAVE_STATE_FILE.unlink()
+
+    # Close jsonl file handle
+    if jsonl_file is not None:
+        jsonl_file.close()
 
 
 if __name__ == "__main__":
