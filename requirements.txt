@@ -1,0 +1,6 @@
+mcp>=1.0.0
+scrapling>=0.4.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+python-dotenv>=1.0.0
+markdownify>=1.0.0
