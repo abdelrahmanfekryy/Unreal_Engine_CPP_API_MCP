@@ -8,7 +8,6 @@ Folder structure matches URL paths under epic_api_docs/.
 import os
 import time
 import json
-import pickle
 from collections import deque
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
@@ -20,8 +19,20 @@ OUTPUT_DIR = Path("epic_api_docs_5.6")
 CRAWL_DELAY = 0.0
 MAX_DEPTH = None
 CRAWL_API_PREFIX = "/documentation/unreal-engine/API"
-SAVE_STATE_FILE = Path("crawl_state.pkl")
 CRAWL_LOG = Path("crawl_log.jsonl")
+
+
+def get_depth(url):
+    parsed = urlparse(url)
+    path = parsed.path
+    if path.rstrip("/") == CRAWL_API_PREFIX.rstrip("/"):
+        return 0
+    prefix = CRAWL_API_PREFIX.rstrip("/")
+    if path.startswith(prefix + "/"):
+        rest = path[len(prefix) + 1:]
+        if rest:
+            return len([p for p in rest.split("/") if p]) + 1
+    return 0
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 visited_urls = set()
@@ -85,35 +96,37 @@ def extract_api_links(response, url):
     return valid_links
 
 
-def save_state(queue):
-    state = {
-        "visited_urls": visited_urls,
-        "all_queued_urls": all_queued_urls,
-        "pages_crawled": pages_crawled[0],
-        "queue": queue,
-    }
-    with open(SAVE_STATE_FILE, "wb") as f:
-        pickle.dump(state, f)
-
-
-def load_state():
+def load_state_from_jsonl():
     global visited_urls, all_queued_urls, pages_crawled
-    if SAVE_STATE_FILE.exists():
-        with open(SAVE_STATE_FILE, "rb") as f:
-            state = pickle.load(f)
-        visited_urls = state["visited_urls"]
-        all_queued_urls = state["all_queued_urls"]
-        pages_crawled[0] = state["pages_crawled"]
-        return state.get("queue", deque())
-    return deque()
+    if not CRAWL_LOG.exists():
+        return deque()
+    crawled = set()
+    queue = deque()
+    with open(CRAWL_LOG, "r", encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            entry = json.loads(line)
+            url = entry["url"]
+            crawled.add(url)
+            pages_crawled[0] += 1
+            for sub_url in entry.get("sub-urls", []):
+                if sub_url not in crawled:
+                    queue.append((sub_url, get_depth(sub_url)))
+    visited_urls = crawled
+    all_queued_urls = crawled
+    return queue
 
 
-def crawl_bfs(resume=False):
+def crawl_bfs(resume=None):
     queue = deque()
     crawl_start = time.time()
 
+    if resume is None:
+        resume = CRAWL_LOG.exists()
+
     if resume:
-        queue = load_state()
+        queue = load_state_from_jsonl()
         print(f"Loaded queue: {len(queue)} items remaining")
     else:
         queue.append((BASE_URL, 0))
@@ -136,7 +149,7 @@ def crawl_bfs(resume=False):
 
         try:
             print(f"[{depth}] Crawling: {url}")
-            response = StealthyFetcher.fetch(url)
+            response = StealthyFetcher.fetch(url, network_idle=True)
 
             if response.status != 200:
                 print(f"  [WARN] Status {response.status}, skipping.")
@@ -161,10 +174,6 @@ def crawl_bfs(resume=False):
             continue
 
         time.sleep(CRAWL_DELAY)
-
-        # Save progress every 10 pages
-        if pages_crawled[0] % 10 == 0:
-            save_state(queue)
 
     elapsed = time.time() - crawl_start
 
@@ -196,10 +205,6 @@ def crawl_bfs(resume=False):
     print(f"\nDirectory structure under {OUTPUT_DIR}/:")
     print_tree(OUTPUT_DIR)
 
-    # Clean up state file if fully complete
-    if SAVE_STATE_FILE.exists():
-        SAVE_STATE_FILE.unlink()
-
     # Close jsonl file handle
     if jsonl_file is not None:
         jsonl_file.close()
@@ -207,5 +212,6 @@ def crawl_bfs(resume=False):
 
 if __name__ == "__main__":
     import sys
-    resume = "--resume" in sys.argv
+    force_full = "--full" in sys.argv
+    resume = not force_full and CRAWL_LOG.exists()
     crawl_bfs(resume=resume)
