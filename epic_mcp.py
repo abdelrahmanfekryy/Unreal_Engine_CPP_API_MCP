@@ -13,7 +13,6 @@ mcp = FastMCP("Epic Games Dev API")
 
 # --- FAISS RAG local knowledge base ---
 _KB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ue5_faiss_kb")
-_DOCS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "epic_api_docs_5.6")
 _EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 _INDEX = None
 _METADATA = None
@@ -177,29 +176,16 @@ def query_ue5_docs(
         score = float(scores[0][rank])
         meta = _METADATA[idx]
 
-        fpath = os.path.join(_DOCS_DIR, meta["file"])
-        try:
-            with open(fpath, "r", encoding="utf-8") as f:
-                lines = f.readlines()
-            total = meta.get("total_chunks", 1)
-            chunk_idx = meta.get("file_chunk_idx", 0)
-            file_lines = meta.get("file_lines", len(lines))
-            line_per_chunk = file_lines / max(total, 1)
-            ls = int(chunk_idx * line_per_chunk) - 3
-            le = int((chunk_idx + 1) * line_per_chunk) + 3
-            ls = max(0, ls)
-            le = min(len(lines), le)
-            preview = "".join(lines[ls:le]).strip()
-        except Exception:
-            preview = "(could not read source file)"
+        preview = meta.get("chunk_content", "").strip()
 
+        total = meta.get("total_chunks", 1)
         results.append({
             "rank": rank + 1,
             "score": round(score, 4),
             "doc_name": meta["doc_name"],
             "file": meta["file"],
             "chunk": f"{meta.get('file_chunk_idx', rank)}/{total}",
-            "preview": preview[:500],
+            "preview": preview,
         })
 
     return {

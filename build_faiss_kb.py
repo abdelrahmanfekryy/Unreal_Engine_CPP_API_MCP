@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Build a FAISS knowledge base from Epic UE5.6 API documentation markdown files.
+Chunks are split by markdown header hierarchy (# through ######).
 Uses sentence-transformers for embedding and faiss-cpu for similarity search.
 """
 
@@ -17,9 +18,7 @@ import faiss
 DOCS_DIR = "/media/abdelrahman/Data/MCP-UE5/epic_api_docs_5.6"
 OUTPUT_DIR = "/media/abdelrahman/Data/MCP-UE5/ue5_faiss_kb"
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"  # Fast, lightweight, 384-dim
-CHUNK_SIZE = 512       # tokens per chunk
-CHUNK_OVERLAP = 64     # overlap between chunks
-MAX_CHUNKS = 128       # max chunks per file (skip files that would exceed this)
+# Chunks are split by markdown header hierarchy (# through ######)
 
 
 def clean_markdown(text: str) -> str:
@@ -62,34 +61,82 @@ def clean_markdown(text: str) -> str:
     return "\n".join(cleaned).strip()
 
 
+def extract_sections(text: str):
+    """
+    Split markdown into sections based on header hierarchy.
+    Each section includes its full header path (all ancestor headers).
+    Returns list of (section_text, header_path_string).
+    """
+    lines = text.split("\n")
+    sections = []  # list of (header_path, [lines])
+    current_headers = []  # stack of (level, header_text)
+    current_lines = []
+    current_path = ""
+
+    header_re = re.compile(r"^(#{1,6})\s+(.+)$")
+
+    for line in lines:
+        m = header_re.match(line)
+        if m:
+            # Save previous section
+            if current_lines:
+                section_text = "\n".join(current_lines).strip()
+                if section_text:
+                    sections.append((current_path, section_text))
+
+            level = len(m.group(1))
+            header_text = m.group(2).strip()
+
+            # Pop headers that are at same or lower level
+            while current_headers and current_headers[-1][0] >= level:
+                current_headers.pop()
+
+            # Build the header path from remaining stack + current
+            ancestor_lines = [h[1] for h in current_headers]
+            ancestor_lines.append(header_text)
+            current_path = "\n".join(ancestor_lines)
+
+            current_headers.append((level, header_text))
+            current_lines = []
+        else:
+            current_lines.append(line)
+
+    # Save last section
+    if current_lines:
+        section_text = "\n".join(current_lines).strip()
+        if section_text:
+            sections.append((current_path, section_text))
+
+    return sections
+
+
 def chunk_text(text: str, doc_path: str, doc_name: str, global_offset: int):
-    """Split text into overlapping chunks. Returns list of (chunk_text, metadata)."""
-    words = text.split()
-    if not words:
+    """
+    Split text into hierarchical sections by header hierarchy. Each chunk contains
+    the full header path plus the section content, preserving parent header context.
+    Returns list of (chunk_text, metadata).
+    """
+    sections = extract_sections(text)
+    if not sections:
         return []
 
-    # Approximate token count as word count (reasonable for English code docs)
-    tokens_per_chunk = CHUNK_SIZE
-    step = tokens_per_chunk - CHUNK_OVERLAP
-
-    total_chunks = min(len(words) // step + 1, MAX_CHUNKS)
+    total_chunks = len(sections)
     chunks = []
-    for i in range(0, len(words), step):
-        chunk_words = words[i : i + tokens_per_chunk]
-        if not chunk_words:
-            break
-        if len(chunks) >= MAX_CHUNKS:
-            break
 
-        chunk_text = " ".join(chunk_words)
+    for i, (header_path, section_body) in enumerate(sections):
+        # Prepend header path to each section so context is preserved
+        chunk_content = f"{header_path}\n\n{section_body}"
+
         meta = {
             "file": doc_path,
             "doc_name": doc_name,
-            "chunk_id": global_offset + len(chunks),
-            "file_chunk_idx": len(chunks),
+            "chunk_id": global_offset + i,
+            "file_chunk_idx": i,
             "total_chunks": total_chunks,
+            "header_path": header_path,
+            "chunk_content": chunk_content,
         }
-        chunks.append((chunk_text, meta))
+        chunks.append((chunk_content, meta))
 
     return chunks
 
@@ -126,11 +173,6 @@ def build_kb():
         for c in chunks:
             c[1]["file_lines"] = line_count
         if not chunks:
-            skipped += 1
-            continue
-
-        if len(chunks) > MAX_CHUNKS:
-            print(f"  [SKIP] {rel_path} -> {len(chunks)} chunks (max {MAX_CHUNKS})")
             skipped += 1
             continue
 

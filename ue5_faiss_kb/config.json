@@ -1,7 +1,0 @@
-{
-  "docs_dir": "/media/abdelrahman/Data/MCP-UE5/epic_api_docs_5.6",
-  "embedding_model": "all-MiniLM-L6-v2",
-  "dim": 384,
-  "index_type": "IndexFlatIP",
-  "chunk_count": 1057
-}

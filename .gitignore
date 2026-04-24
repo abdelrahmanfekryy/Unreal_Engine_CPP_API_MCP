@@ -4,3 +4,4 @@ experiments/
 crawl_state.pkl
 **.jsonl
 __pycache__/
+ue5_faiss_kb/
