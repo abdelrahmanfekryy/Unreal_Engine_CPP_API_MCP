@@ -9,6 +9,7 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 from markdownify import markdownify as md
 import sys
+import re
 
 OUTPUT_DIR = Path("epic_api_docs_5.6")
 
@@ -33,6 +34,34 @@ def convert_html_to_md(html_path: Path) -> bool:
         inner = str(md_div)
         result = md(inner, heading_style="ATX", bullet_char="-")
         result = f"# {title}\n\n{result}"
+
+        # Strip URLs from markdown links, keeping text in bold
+        # Handles nested brackets like [operator[]](url) → **operator[]**
+        def _strip_links(text):
+            out = []
+            i = 0
+            while i < len(text):
+                if text[i] == '[':
+                    depth, j = 1, i + 1
+                    while j < len(text) and depth > 0:
+                        if text[j] == '[': depth += 1
+                        elif text[j] == ']': depth -= 1
+                        j += 1
+                    if depth == 0 and j < len(text) and text[j] == '(':
+                        k, pd = j + 1, 1
+                        while k < len(text) and pd > 0:
+                            if text[k] == '(': pd += 1
+                            elif text[k] == ')': pd -= 1
+                            k += 1
+                        if pd == 0:
+                            inner = text[i+1:j-1]
+                            out.append(f'**{inner}**')
+                            i = k
+                            continue
+                out.append(text[i])
+                i += 1
+            return ''.join(out)
+        result = _strip_links(result)
 
         # Write .md file alongside the .html file
         md_path = html_path.with_suffix(".md")
